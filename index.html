@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>כלי מתקדם לחיתוך קובץ וידאו</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;700&display=swap');
+        body {
+            font-family: 'Heebo', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-purple-100 to-blue-100 min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
+        <h1 class="text-3xl font-bold text-center mb-6 text-purple-700">כלי מתקדם לחיתוך קובץ וידאו</h1>
+        
+        <div class="mb-6">
+            <label for="videoFile" class="block text-sm font-medium text-gray-700 mb-2">בחר קובץ וידאו</label>
+            <input type="file" id="videoFile" accept="video/*" class="w-full p-2 border border-purple-300 rounded-md">
+        </div>
+
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">בחר שיטת חיתוך</label>
+            <div class="flex items-center mb-2">
+                <input type="radio" id="splitByParts" name="cutMethod" value="parts" checked class="mr-2">
+                <label for="splitByParts">חלק למספר חלקים שווים</label>
+            </div>
+            <div class="flex items-center">
+                <input type="radio" id="splitByDuration" name="cutMethod" value="duration" class="mr-2">
+                <label for="splitByDuration">הגדר אורך לכל חלק</label>
+            </div>
+        </div>
+
+        <div id="partsInput" class="mb-6">
+            <label for="numParts" class="block text-sm font-medium text-gray-700 mb-2">מספר חלקים</label>
+            <input type="number" id="numParts" min="2" value="2" class="mt-1 block w-full px-3 py-2 bg-white border border-purple-300 rounded-md text-sm shadow-sm placeholder-purple-400 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
+        </div>
+
+        <div id="durationInput" class="mb-6 hidden">
+            <label for="partDuration" class="block text-sm font-medium text-gray-700 mb-2">אורך כל חלק (בשניות)</label>
+            <input type="number" id="partDuration" min="1" value="10" step="0.1" class="mt-1 block w-full px-3 py-2 bg-white border border-purple-300 rounded-md text-sm shadow-sm placeholder-purple-400 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
+        </div>
+        
+        <button id="cutButton" class="w-full bg-purple-600 text-white rounded-md px-4 py-2 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50 transition duration-300 flex items-center justify-center">
+            <i data-lucide="scissors" class="w-5 h-5 mr-2"></i>
+            חתוך
+        </button>
+        
+        <div id="status" class="mt-4 p-3 rounded-md hidden"></div>
+        <div id="result" class="mt-4"></div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        
+        const cutButton = document.getElementById('cutButton');
+        const statusDiv = document.getElementById('status');
+        const resultDiv = document.getElementById('result');
+        const videoFileInput = document.getElementById('videoFile');
+        const splitByParts = document.getElementById('splitByParts');
+        const splitByDuration = document.getElementById('splitByDuration');
+        const partsInput = document.getElementById('partsInput');
+        const durationInput = document.getElementById('durationInput');
+
+        splitByParts.addEventListener('change', toggleInputs);
+        splitByDuration.addEventListener('change', toggleInputs);
+
+        function toggleInputs() {
+            if (splitByParts.checked) {
+                partsInput.classList.remove('hidden');
+                durationInput.classList.add('hidden');
+            } else {
+                partsInput.classList.add('hidden');
+                durationInput.classList.remove('hidden');
+            }
+        }
+
+        cutButton.addEventListener('click', async function() {
+            const videoFile = videoFileInput.files[0];
+            if (!videoFile) {
+                updateStatus('אנא בחר קובץ וידאו', 'error');
+                return;
+            }
+
+            try {
+                updateStatus('מתחיל בחיתוך הקובץ...', 'info');
+                cutButton.disabled = true;
+                cutButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+                const video = document.createElement('video');
+                video.src = URL.createObjectURL(videoFile);
+
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = resolve;
+                    video.onerror = reject;
+                });
+
+                const totalDuration = video.duration;
+                let segments;
+
+                if (splitByParts.checked) {
+                    const numParts = parseInt(document.getElementById('numParts').value);
+                    const segmentDuration = totalDuration / numParts;
+                    segments = Array.from({length: numParts}, (_, i) => ({
+                        start: i * segmentDuration,
+                        end: (i + 1) * segmentDuration
+                    }));
+                } else {
+                    const partDuration = parseFloat(document.getElementById('partDuration').value);
+                    const numParts = Math.ceil(totalDuration / partDuration);
+                    segments = Array.from({length: numParts}, (_, i) => ({
+                        start: i * partDuration,
+                        end: Math.min((i + 1) * partDuration, totalDuration)
+                    }));
+                }
+
+                const results = [];
+
+                for (let i = 0; i < segments.length; i++) {
+                    const {start, end} = segments[i];
+                    video.currentTime = start;
+
+                    const stream = video.captureStream();
+                    const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+
+                    const chunks = [];
+                    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+                    
+                    const recordingPromise = new Promise(resolve => {
+                        mediaRecorder.onstop = () => {
+                            const blob = new Blob(chunks, { type: 'video/webm' });
+                            const url = URL.createObjectURL(blob);
+                            results.push({ url, index: i + 1 });
+                            resolve();
+                        };
+                    });
+
+                    mediaRecorder.start();
+                    video.play();
+
+                    await new Promise(resolve => setTimeout(resolve, (end - start) * 1000));
+
+                    mediaRecorder.stop();
+                    video.pause();
+
+                    await recordingPromise;
+
+                    updateStatus(`חלק ${i + 1} מתוך ${segments.length} הושלם`, 'info');
+                }
+
+                displayResults(results);
+
+            } catch (error) {
+                console.error('Error:', error);
+                updateStatus('אירעה שגיאה: ' + error.message, 'error');
+            } finally {
+                cutButton.disabled = false;
+                cutButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        });
+
+        function updateStatus(message, type) {
+            statusDiv.textContent = message;
+            statusDiv.className = `mt-4 p-3 rounded-md ${type === 'error' ? 'bg-red-100 text-red-700' : type === 'success' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`;
+            statusDiv.style.display = 'block';
+        }
+
+        function displayResults(results) {
+            let html = `<h3 class="text-lg font-semibold mb-2">תוצאות החיתוך:</h3>`;
+            html += `<p class="mb-4 text-sm text-gray-600">הערה: הקבצים נשמרים בפורמט WebM. ייתכן שתצטרך להמיר אותם ל-MP4 לאחר ההורדה.</p>`;
+            
+            results.forEach(({url, index}) => {
+                html += `
+                    <div class="mb-4 p-4 border border-purple-200 rounded-md">
+                        <h4 class="font-semibold mb-2">חלק ${index}</h4>
+                        <video controls class="w-full mb-2">
+                            <source src="${url}" type="video/webm">
+                            הדפדפן שלך אינו תומך בתג הווידאו.
+                        </video>
+                        <a href="${url}" download="cut_video_part_${index}.webm" class="bg-purple-500 text-white px-4 py-2 rounded-md hover:bg-purple-600 transition duration-300 flex items-center justify-center">
+                            <i data-lucide="download" class="w-5 h-5 mr-2"></i>
+                            הורד חלק ${index}
+                        </a>
+                    </div>
+                `;
+            });
+
+            resultDiv.innerHTML = html;
+            lucide.createIcons();
+            updateStatus('החיתוך הושלם בהצלחה!', 'success');
+        }
+    </script>
+</body>
+</html>
